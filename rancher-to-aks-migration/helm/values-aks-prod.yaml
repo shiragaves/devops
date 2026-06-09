@@ -1,0 +1,40 @@
+replicaCount: 3
+
+image:
+  repository: myacr.azurecr.io/petclinic
+  tag: "3.2.0"
+  pullPolicy: Always
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: petclinic.mycompany.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: petclinic-tls
+      hosts: [petclinic.mycompany.com]
+
+database:
+  host: "petclinic-db.mysql.database.azure.com"
+  name: "petclinic"
+  port: 3306
+
+keyVault:
+  enabled: true
+  vaultName: "mycompany-kv"
+  tenantId: "<tenant-id>"
+  clientId: "<workload-identity-client-id>"
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 768Mi
+  limits:
+    cpu: "2"
+    memory: "2Gi"

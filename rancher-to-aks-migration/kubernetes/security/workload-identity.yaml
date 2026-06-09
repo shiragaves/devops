@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: petclinic-sa
+  namespace: petclinic
+  annotations:
+    azure.workload.identity/client-id: "<workload-identity-client-id>"
+---
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: petclinic-kv-secrets
+  namespace: petclinic
+spec:
+  provider: azure
+  parameters:
+    usePodIdentity: "false"
+    useVMManagedIdentity: "false"
+    clientID: "<workload-identity-client-id>"
+    keyvaultName: "petclinic-kv"
+    tenantId: "<tenant-id>"
+    objects: |
+      array:
+        - |
+          objectName: db-password
+          objectType: secret
+          objectVersion: ""
+  secretObjects:
+    - secretName: petclinic-secrets
+      type: Opaque
+      data:
+        - objectName: db-password
+          key: db-password

@@ -1,0 +1,160 @@
+name: Build Scan Push Deploy — PetClinic to AKS
+
+on:
+  push:
+    branches: [main, release/*]
+  pull_request:
+    branches: [main]
+
+env:
+  ACR_NAME: petclinicacr
+  IMAGE_NAME: petclinic
+  NAMESPACE: petclinic
+  HELM_RELEASE: petclinic
+  HELM_CHART: ./helm/petclinic
+
+jobs:
+  build-and-scan:
+    name: Build, Scan and Push
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write          # Workload Identity for ACR login
+      contents: read
+      security-events: write   # Upload SARIF to GitHub Security
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set image tag
+        run: echo "IMAGE_TAG=$(echo $GITHUB_SHA | cut -c1-8)" >> $GITHUB_ENV
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR Login
+        run: az acr login --name $ACR_NAME
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (multi-stage)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          push: false
+          tags: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true
+
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "1"           # Fails pipeline on HIGH/CRITICAL
+
+      - name: Upload scan results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Push to ACR
+        run: |
+          docker push $ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG
+          docker tag $ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG \
+                     $ACR_NAME.azurecr.io/$IMAGE_NAME:latest
+
+  deploy-nonprod:
+    name: Deploy to AKS Non-Prod
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    environment: nonprod
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group petclinic-aks-rg \
+            --name petclinic-aks-nonprod
+
+      - name: Helm deploy (non-prod)
+        run: |
+          helm upgrade --install $HELM_RELEASE $HELM_CHART \
+            --namespace $NAMESPACE \
+            --create-namespace \
+            --values helm/values-aks-nonprod.yaml \
+            --set image.tag=$IMAGE_TAG \
+            --wait --timeout 10m \
+            --atomic
+
+      - name: Smoke test
+        run: |
+          kubectl rollout status deployment/petclinic -n $NAMESPACE
+          kubectl wait --for=condition=available deployment/petclinic -n $NAMESPACE --timeout=120s
+          curl -sf https://petclinic-nonprod.mycompany.com/actuator/health | jq .status
+
+  deploy-prod:
+    name: Deploy to AKS Production
+    needs: deploy-nonprod
+    runs-on: ubuntu-latest
+    environment: production          # Requires manual approval from team lead
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group petclinic-aks-rg \
+            --name petclinic-aks-prod
+
+      - name: Helm deploy (prod)
+        run: |
+          helm upgrade --install $HELM_RELEASE $HELM_CHART \
+            --namespace $NAMESPACE \
+            --values helm/values-aks-prod.yaml \
+            --set image.tag=$IMAGE_TAG \
+            --wait --timeout 15m \
+            --atomic
+
+      - name: Post-deploy validation
+        run: |
+          kubectl rollout status deployment/petclinic -n $NAMESPACE
+          kubectl get pods -n $NAMESPACE -o wide
+          kubectl get svc -n $NAMESPACE
+          helm list -n $NAMESPACE
+          curl -sf https://petclinic.mycompany.com/actuator/health | jq .
+
+      - name: Rollback (on failure)
+        if: failure()
+        run: |
+          echo "Deployment failed — initiating rollback"
+          helm rollback $HELM_RELEASE -n $NAMESPACE
+          kubectl rollout status deployment/petclinic -n $NAMESPACE

@@ -1,0 +1,33 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: petclinic-fqdn-egress
+  namespace: petclinic
+spec:
+  endpointSelector:
+    matchLabels:
+      app: petclinic
+  egress:
+    - toFQDNs:
+        - matchName: "petclinic-db.mysql.database.azure.com"
+      toPorts:
+        - ports:
+            - port: "3306"
+              protocol: TCP
+    - toFQDNs:
+        - matchName: "api.partner.example.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+          rules:
+            dns:
+              - matchPattern: "*"

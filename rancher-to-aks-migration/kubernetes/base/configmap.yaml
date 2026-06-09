@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: petclinic-config
+  namespace: petclinic
+data:
+  SPRING_PROFILES_ACTIVE: "kubernetes"
+  SPRING_DATASOURCE_URL: "jdbc:mysql://petclinic-db.mysql.database.azure.com:3306/petclinic?useSSL=true&requireSSL=true"
+  SPRING_DATASOURCE_USERNAME: "petclinic"
+  SERVER_PORT: "8080"

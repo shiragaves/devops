@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: petclinic
+  labels:
+    app: petclinic
+    environment: production
+    pod-security.kubernetes.io/enforce: restricted

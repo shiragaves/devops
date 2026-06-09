@@ -1,0 +1,28 @@
+replicaCount: 1
+
+image:
+  repository: myacr.azurecr.io/petclinic
+  tag: "latest"
+  pullPolicy: Always
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: petclinic-nonprod.mycompany.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+database:
+  host: "petclinic-nonprod-db.mysql.database.azure.com"
+  name: "petclinic"
+  port: 3306
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: "1Gi"

@@ -1,0 +1,36 @@
+version: "3.9"
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_pw
+      MYSQL_DATABASE: petclinic
+    secrets:
+      - db_root_pw
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  petclinic:
+    build: .
+    image: petclinic:3.2.0
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/petclinic
+      SPRING_DATASOURCE_USERNAME: petclinic
+      SPRING_DATASOURCE_PASSWORD_FILE: /run/secrets/db_pw
+      SPRING_PROFILES_ACTIVE: onprem
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    secrets:
+      - db_pw
+
+secrets:
+  db_root_pw:
+    file: ./secrets/db_root_pw.txt
+  db_pw:
+    file: ./secrets/db_pw.txt
